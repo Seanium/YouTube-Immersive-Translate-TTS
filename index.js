@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube同声传译：字幕文本转语音TTS（适用于沉浸式翻译）
 // @namespace    http://tampermonkey.net/
-// @version      1.12.1
+// @version      1.12.2
 // @description  将YouTube上的沉浸式翻译双语字幕转换为语音播放，支持更改音色和调整语音速度，支持多语言
 // @author       Sean2333
 // @match        https://www.youtube.com/*
@@ -348,6 +348,9 @@
         
         dropdownArrow.addEventListener('click', (e) => {
             e.stopPropagation();
+            if (!isSpeechEnabled) {
+                return;
+            }
             const isOpen = select.style.display === 'none';
             updateDropdownState(isOpen);
         });
