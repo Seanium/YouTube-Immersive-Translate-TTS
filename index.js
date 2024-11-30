@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         YouTube字幕文本转语音TTS（适用于沉浸式翻译）
+// @name         YouTube同声传译：字幕文本转语音TTS（适用于沉浸式翻译）
 // @namespace    http://tampermonkey.net/
-// @version      1.11
-// @description  将YouTube上的沉浸式翻译中文字幕转换为语音播放，支持更改音色和调整语音速度
+// @version      1.12
+// @description  将YouTube上的沉浸式翻译双语字幕转换为语音播放，支持更改音色和调整语音速度，支持多语言
 // @author       Sean2333
 // @match        https://www.youtube.com/*
 // @grant        GM_setValue
@@ -10,7 +10,7 @@
 // @license      MIT
 // ==/UserScript==
 
-(function() {
+(function () {
     'use strict';
 
     let lastCaptionText = '';
@@ -38,10 +38,6 @@
     let originalReplaceState = null;
     let timeoutIds = [];
 
-    let shortcuts = {
-        toggleSpeech: 'Alt+T',  // 开关TTS功能
-    };
-
     function setupShortcuts() {
         document.addEventListener('keydown', (e) => {
             if (e.altKey && e.key.toLowerCase() === 't') {  // 添加 toLowerCase() 以兼容大小写
@@ -57,14 +53,14 @@
     }
 
     function loadVoices() {
-        return new Promise(function(resolve) {
+        return new Promise(function (resolve) {
             let voices = synth.getVoices();
             if (voices.length !== 0) {
                 console.log('成功加载语音列表，共', voices.length, '个语音');
                 resolve(voices);
             } else {
                 console.log('等待语音列表加载...');
-                synth.onvoiceschanged = function() {
+                synth.onvoiceschanged = function () {
                     voices = synth.getVoices();
                     console.log('语音列表加载完成，共', voices.length, '个语音');
                     resolve(voices);
@@ -140,6 +136,7 @@
             content.style.display = 'none';
         }
 
+        // 语音开关
         const speechToggleDiv = document.createElement('div');
         Object.assign(speechToggleDiv.style, {
             marginBottom: '10px',
@@ -159,7 +156,7 @@
             marginLeft: '5px'
         });
 
-        speechToggleCheckbox.onchange = function() {
+        speechToggleCheckbox.onchange = function () {
             isSpeechEnabled = this.checked;
             select.disabled = !isSpeechEnabled;
             testButton.disabled = !isSpeechEnabled;
@@ -167,6 +164,7 @@
             customSpeedSelect.disabled = !isSpeechEnabled || followVideoSpeed;
             volumeSlider.disabled = !isSpeechEnabled;
             autoVideoPauseCheckbox.disabled = !isSpeechEnabled;
+            searchInput.disabled = !isSpeechEnabled;
 
             GM_setValue('isSpeechEnabled', isSpeechEnabled);
 
@@ -196,6 +194,7 @@
         speechToggleDiv.appendChild(speechToggleLabel);
         content.insertBefore(speechToggleDiv, content.firstChild);
 
+        // 自动暂停视频开关
         const autoVideoPauseDiv = document.createElement('div');
         Object.assign(autoVideoPauseDiv.style, {
             marginBottom: '10px',
@@ -248,7 +247,7 @@
             width: '220px',
             zIndex: '10000',
             pointerEvents: 'none',
-            lineHeight: '1.5', 
+            lineHeight: '1.5',
             boxShadow: '0 2px 8px rgba(0, 0, 0, 0.15)'
         });
         helpIcon.appendChild(tooltip);
@@ -258,19 +257,19 @@
             const gap = 10;
             let left = e.clientX + gap;
             let top = e.clientY + gap;
-            
+
             if (left + tooltip.offsetWidth > window.innerWidth) {
                 left = e.clientX - tooltip.offsetWidth - gap;
             }
-            
+
             if (top + tooltip.offsetHeight > window.innerHeight) {
                 top = e.clientY - tooltip.offsetHeight - gap;
             }
-            
+
             tooltip.style.left = left + 'px';
             tooltip.style.top = top + 'px';
         });
-        
+
         helpIcon.addEventListener('mouseleave', () => {
             tooltip.style.display = 'none';
         });
@@ -285,7 +284,7 @@
         labelWrapper.appendChild(autoVideoPauseLabel);
         labelWrapper.appendChild(helpIcon);
 
-        autoVideoPauseCheckbox.onchange = function() {
+        autoVideoPauseCheckbox.onchange = function () {
             autoVideoPause = this.checked;
             GM_setValue('autoVideoPause', autoVideoPause);
             console.log('自动暂停视频已' + (autoVideoPause ? '启用' : '禁用'));
@@ -295,34 +294,105 @@
         autoVideoPauseDiv.appendChild(labelWrapper);
         content.insertBefore(autoVideoPauseDiv, content.firstChild.nextSibling);
 
+        // 音色选择
         const voiceDiv = document.createElement('div');
         Object.assign(voiceDiv.style, {
-            marginBottom: '10px'
+            marginBottom: '10px',
+            position: 'relative'
         });
 
         const voiceLabel = document.createElement('div');
-        voiceLabel.textContent = '选择音色：';
+        voiceLabel.textContent = '切换音色（支持多语言，与字幕语言匹配即可）：';
         Object.assign(voiceLabel.style, {
             marginBottom: '5px'
         });
 
-        const select = document.createElement('select');
-        Object.assign(select.style, {
-            width: '100%',
-            padding: '5px',
-            marginBottom: '5px',
-            borderRadius: '3px'
+        const dropdownContainer = document.createElement('div');
+        Object.assign(dropdownContainer.style, {
+            position: 'relative',
+            width: '100%'
         });
 
+        const inputContainer = document.createElement('div');
+        Object.assign(inputContainer.style, {
+            position: 'relative',
+            width: '100%'
+        });
+
+        const searchInput = document.createElement('input');
+        searchInput.type = 'text';
+        searchInput.placeholder = '搜索或选择音色...';
+        Object.assign(searchInput.style, {
+            width: '100%',
+            padding: '5px 25px 5px 8px',
+            marginBottom: '5px',
+            borderRadius: '3px',
+            boxSizing: 'border-box'
+        });
+
+        const dropdownArrow = document.createElement('span');
+        dropdownArrow.textContent = '▼';
+        Object.assign(dropdownArrow.style, {
+            position: 'absolute',
+            right: '8px',
+            top: '50%',
+            transform: 'translateY(-50%)',
+            color: '#666',
+            pointerEvents: 'none',
+            fontSize: '12px'
+        });
+
+        const select = document.createElement('ul');
+        Object.assign(select.style, {
+            position: 'absolute',
+            width: '100%',
+            maxHeight: '200px',
+            overflowY: 'auto',
+            border: '1px solid #ccc',
+            borderRadius: '3px',
+            backgroundColor: 'white',
+            zIndex: '10000',
+            listStyle: 'none',
+            padding: '0',
+            margin: '0',
+            display: 'none',
+            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+        });
+
+        searchInput.addEventListener('click', (e) => {
+            e.stopPropagation();
+            select.style.display = 'block';
+        });
+
+        document.addEventListener('click', () => {
+            select.style.display = 'none';
+        });
+
+        select.addEventListener('click', (e) => {
+            e.stopPropagation();
+        });
+
+        searchInput.oninput = function () {
+            const searchTerm = this.value.toLowerCase();
+            Array.from(select.children).forEach(item => {
+                const text = item.textContent.toLowerCase();
+                item.style.display = text.includes(searchTerm) ? 'block' : 'none';
+            });
+            select.style.display = 'block';
+        };
+
+        // 测试音色按钮
         const testButton = document.createElement('button');
         testButton.textContent = '测试音色';
         Object.assign(testButton.style, {
             padding: '5px 10px',
             borderRadius: '3px',
             cursor: 'pointer',
-            width: '100%'
+            width: '100%',
+            marginTop: '5px'
         });
 
+        // 音量控制
         const volumeControl = document.createElement('div');
         Object.assign(volumeControl.style, {
             marginTop: '10px',
@@ -355,14 +425,14 @@
             marginLeft: '5px'
         });
 
-        volumeSlider.onchange = function() {
+        volumeSlider.onchange = function () {
             speechVolume = parseFloat(this.value);
             volumeValue.textContent = `${Math.round(speechVolume * 100)}%`;
             GM_setValue('speechVolume', speechVolume);
             console.log('音量已设置为：', speechVolume);
         };
 
-        volumeSlider.oninput = function() {
+        volumeSlider.oninput = function () {
             volumeValue.textContent = `${Math.round(this.value * 100)}%`;
         };
 
@@ -370,6 +440,7 @@
         volumeControl.appendChild(volumeSlider);
         volumeControl.appendChild(volumeValue);
 
+        // 语音速度控制
         const speedControl = document.createElement('div');
         Object.assign(speedControl.style, {
             marginTop: '10px',
@@ -424,23 +495,49 @@
             borderRadius: '3px'
         });
 
-        followSpeedCheckbox.onchange = function() {
+        followSpeedCheckbox.onchange = function () {
             followVideoSpeed = this.checked;
             customSpeedSelect.disabled = this.checked;
             GM_setValue('followVideoSpeed', followVideoSpeed);
             console.log('语音速度模式：', followVideoSpeed ? '跟随视频' : '自定义');
         };
 
-        customSpeedSelect.onchange = function() {
+        customSpeedSelect.onchange = function () {
             customSpeed = parseFloat(this.value);
             GM_setValue('customSpeed', customSpeed);
             console.log('自定义语音速度设置为：', customSpeed);
         };
 
+
+        const testPhrases = {
+            'zh': '这是一个中文测试语音',
+            'zh-CN': '这是一个中文测试语音',
+            'zh-TW': '這是一個中文測試語音',
+            'zh-HK': '這是一個中文測試語音',
+            'en': 'This is a test voice in English',
+            'ja': 'これは日本語のテスト音声です',
+            'ko': '이것은 한국어 테스트 음성입니다',
+            'fr': 'Ceci est un test vocal en français',
+            'de': 'Dies ist eine Testsprache auf Deutsch',
+            'es': 'Esta es una voz de prueba en español',
+            'it': 'Questa è una voce di prova in italiano',
+            'ru': 'Это тестовый голос на русском языке',
+            'pt': 'Esta é uma voz de teste em português',
+            'default': 'This is a test voice' // 默认测试文本
+        };
+
         testButton.onclick = (e) => {
             e.stopPropagation();
             if (selectedVoice) {
-                speakText('这是一个测试语音', false);
+                // 获取语音的基础语言代码（例如 'zh-CN' 转为 'zh'）
+                const baseLang = selectedVoice.lang.split('-')[0];
+                const fullLang = selectedVoice.lang;
+
+                // 按优先级选择测试文本：完整语言代码 > 基础语言代码 > 默认文本
+                const testText = testPhrases[fullLang] || testPhrases[baseLang] || testPhrases['default'];
+
+                console.log(`使用测试文本(${selectedVoice.lang}): ${testText}`);
+                speakText(testText, false);
             }
         };
 
@@ -449,9 +546,13 @@
         titleBar.appendChild(title);
         titleBar.appendChild(toggleButton);
 
+        inputContainer.appendChild(searchInput);
+        inputContainer.appendChild(dropdownArrow);
+        dropdownContainer.appendChild(inputContainer);
+        dropdownContainer.appendChild(select);
+        dropdownContainer.appendChild(testButton);
         voiceDiv.appendChild(voiceLabel);
-        voiceDiv.appendChild(select);
-        voiceDiv.appendChild(testButton);
+        voiceDiv.appendChild(dropdownContainer);
 
         followSpeedDiv.appendChild(followSpeedCheckbox);
         followSpeedDiv.appendChild(followSpeedLabel);
@@ -558,52 +659,63 @@
     }
 
     function selectVoice() {
-        loadVoices().then(function(voices) {
+        loadVoices().then(function (voices) {
             if (!voiceSelectUI) {
                 voiceSelectUI = createVoiceSelectUI();
             }
 
             const select = voiceSelectUI.select;
+            const searchInput = voiceSelectUI.container.querySelector('input[type="text"]');
             while (select.firstChild) {
                 select.removeChild(select.firstChild);
             }
 
-            const chineseVoices = voices.filter(voice =>
-                                                voice.lang.includes('zh') || voice.name.toLowerCase().includes('chinese')
-                                               );
-
-            chineseVoices.forEach((voice, index) => {
-                const option = document.createElement('option');
-                option.value = index;
+            voices.forEach((voice, index) => {
+                const option = document.createElement('li');
+                option.dataset.value = index;
                 option.textContent = `${voice.name} (${voice.lang})`;
+                Object.assign(option.style, {
+                    padding: '8px 10px',
+                    cursor: 'pointer',
+                    borderBottom: '1px solid #eee'
+                });
+
+                option.addEventListener('mouseover', () => {
+                    option.style.backgroundColor = '#f0f0f0';
+                });
+
+                option.addEventListener('mouseout', () => {
+                    option.style.backgroundColor = '';
+                });
+
+                option.addEventListener('click', () => {
+                    selectedVoice = voices[index];
+                    selectedVoiceName = selectedVoice.name;
+                    searchInput.value = option.textContent;
+                    GM_setValue('selectedVoiceName', selectedVoiceName);
+                    select.style.display = 'none';
+                    console.log('已切换语音到：', selectedVoice.name);
+                });
+
                 select.appendChild(option);
             });
 
-            if (selectedVoiceName) {
-                selectedVoice = chineseVoices.find(voice => voice.name === selectedVoiceName);
+            // 添加默认选中值设置:
+            if (selectedVoice) {
+                searchInput.value = `${selectedVoice.name} (${selectedVoice.lang})`;
             }
 
             if (!selectedVoice) {
-                selectedVoice = chineseVoices.find(voice =>
-                                                   voice.name === 'Microsoft Xiaoxiao Online (Natural) - Chinese (Mainland)'
-                                                  ) || chineseVoices[0];
+                selectedVoice = voices.find(voice =>
+                    voice.name === selectedVoiceName
+                ) || voices.find(voice =>
+                    voice.name === 'Microsoft Xiaoxiao Online (Natural) - Chinese (Mainland)'
+                ) || voices.find(voice => voice.lang.includes('zh')) || voices[0];
             }
 
-            const selectedIndex = chineseVoices.indexOf(selectedVoice);
+            const selectedIndex = voices.indexOf(selectedVoice);
             if (selectedIndex >= 0) {
-                select.selectedIndex = selectedIndex;
-            }
-
-            select.onchange = function() {
-                selectedVoice = chineseVoices[this.value];
-                selectedVoiceName = selectedVoice.name;
-                GM_setValue('selectedVoiceName', selectedVoiceName);
-                console.log('已切换语音到：', selectedVoice.name);
-            };
-
-            console.log('可用的中文语音数量：', chineseVoices.length);
-            if (chineseVoices.length > 0) {
-                console.log('第一个可用的中文语音：', chineseVoices[0].name);
+                searchInput.value = `${selectedVoice.name} (${selectedVoice.lang})`;
             }
         });
     }
@@ -640,10 +752,10 @@
 
         if (text) {
             const utterance = new SpeechSynthesisUtterance(text);
-            utterance.lang = 'zh-CN';
 
             if (selectedVoice) {
                 utterance.voice = selectedVoice;
+                utterance.lang = selectedVoice.lang;
             }
 
             utterance.volume = speechVolume;
@@ -820,7 +932,7 @@
                     console.log('找到字幕容器，开始设置监听');
                     setupCaptionObserver();
                 } else {
-                    console.log(`未找到字幕容器，${retryCount + 1}秒后重试`);
+                    console.log(`未找到字幕容器，1秒后重试`);
                     retryCount++;
                     const timeoutId = setTimeout(trySetupObserver, 1000);
                     timeoutIds.push(timeoutId);
@@ -858,13 +970,13 @@
         observeVideoPlayer();
 
         originalPushState = history.pushState;
-        history.pushState = function() {
+        history.pushState = function () {
             originalPushState.apply(history, arguments);
             checkForVideoChange();
         };
 
         originalReplaceState = history.replaceState;
-        history.replaceState = function() {
+        history.replaceState = function () {
             originalReplaceState.apply(history, arguments);
             checkForVideoChange();
         };
@@ -948,7 +1060,7 @@
         }
     }
 
-    window.addEventListener('load', function() {
+    window.addEventListener('load', function () {
         console.log('页面加载完成，开始初始化脚本');
         setTimeout(() => {
             selectVoice();
