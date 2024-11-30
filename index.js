@@ -285,12 +285,15 @@
         Object.assign(speedControl.style, {
             marginTop: '10px',
             borderTop: '1px solid #eee',
-            paddingTop: '10px'
+            paddingTop: '10px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px'
         });
 
         const followSpeedDiv = document.createElement('div');
         Object.assign(followSpeedDiv.style, {
-            marginBottom: '8px'
+            flex: '1'
         });
 
         const followSpeedCheckbox = document.createElement('input');
@@ -306,6 +309,9 @@
         });
 
         const customSpeedDiv = document.createElement('div');
+        Object.assign(customSpeedDiv.style, {
+            flex: '1'
+        });
 
         const customSpeedLabel = document.createElement('div');
         customSpeedLabel.textContent = '自定义倍速：';
