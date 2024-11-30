@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube字幕文本转语音TTS（适用于沉浸式翻译）
 // @namespace    http://tampermonkey.net/
-// @version      1.10
+// @version      1.11
 // @description  将YouTube上的沉浸式翻译中文字幕转换为语音播放，支持更改音色和调整语音速度
 // @author       Sean2333
 // @match        https://www.youtube.com/*
@@ -30,6 +30,7 @@
     let selectedVoiceName = GM_getValue('selectedVoiceName', null);
     let windowPosX = GM_getValue('windowPosX', null);
     let windowPosY = GM_getValue('windowPosY', null);
+    let autoVideoPause = GM_getValue('autoVideoPause', true);
     let currentObserver = null;
     let currentVideoId = null;
     let videoObserver = null;
@@ -146,6 +147,7 @@
             followSpeedCheckbox.disabled = !isSpeechEnabled;
             customSpeedSelect.disabled = !isSpeechEnabled || followVideoSpeed;
             volumeSlider.disabled = !isSpeechEnabled;
+            autoVideoPauseCheckbox.disabled = !isSpeechEnabled;
 
             GM_setValue('isSpeechEnabled', isSpeechEnabled);
 
@@ -174,6 +176,35 @@
         speechToggleDiv.appendChild(speechToggleCheckbox);
         speechToggleDiv.appendChild(speechToggleLabel);
         content.insertBefore(speechToggleDiv, content.firstChild);
+
+        const autoVideoPauseDiv = document.createElement('div');
+        Object.assign(autoVideoPauseDiv.style, {
+            marginBottom: '10px',
+            borderBottom: '1px solid #eee',
+            paddingBottom: '10px'
+        });
+
+        const autoVideoPauseCheckbox = document.createElement('input');
+        autoVideoPauseCheckbox.type = 'checkbox';
+        autoVideoPauseCheckbox.checked = autoVideoPause;
+        autoVideoPauseCheckbox.id = 'autoVideoPauseCheckbox';
+
+        const autoVideoPauseLabel = document.createElement('label');
+        autoVideoPauseLabel.textContent = '自动暂停视频，以完整播放语音（建议开启）';
+        autoVideoPauseLabel.htmlFor = 'autoVideoPauseCheckbox';
+        Object.assign(autoVideoPauseLabel.style, {
+            marginLeft: '5px'
+        });
+
+        autoVideoPauseCheckbox.onchange = function() {
+            autoVideoPause = this.checked;
+            GM_setValue('autoVideoPause', autoVideoPause);
+            console.log('自动暂停视频已' + (autoVideoPause ? '启用' : '禁用'));
+        };
+
+        autoVideoPauseDiv.appendChild(autoVideoPauseCheckbox);
+        autoVideoPauseDiv.appendChild(autoVideoPauseLabel);
+        content.insertBefore(autoVideoPauseDiv, content.firstChild.nextSibling);
 
         const voiceDiv = document.createElement('div');
         Object.assign(voiceDiv.style, {
@@ -491,11 +522,18 @@
 
         if (isNewCaption && synth.speaking) {
             console.log('新字幕出现，但当前语音未完成');
-            pendingText = text;
-            if (video && !video.paused) {
-                video.pause();
-                isWaitingToSpeak = true;
-                console.log('视频已暂停，等待当前语音完成');
+            if (autoVideoPause) {
+                pendingText = text;
+                if (video && !video.paused) {
+                    video.pause();
+                    isWaitingToSpeak = true;
+                    console.log('视频已暂停，等待当前语音完成');
+                }
+            } else {
+                // 不自动暂停时，直接取消当前语音播放新的
+                synth.cancel();
+                pendingText = null;
+                isWaitingToSpeak = false;
             }
             return;
         }
@@ -532,7 +570,7 @@
                     pendingText = null;
                     speakText(nextText);
                 }
-                else if (isWaitingToSpeak && video && video.paused) {
+                else if (autoVideoPause && isWaitingToSpeak && video && video.paused) {
                     isWaitingToSpeak = false;
                     video.play();
                     console.log('所有语音播放完成，视频继续播放');
@@ -541,7 +579,7 @@
 
             utterance.onerror = () => {
                 console.error('语音播放出错');
-                if (isWaitingToSpeak && video && video.paused) {
+                if (autoVideoPause && isWaitingToSpeak && video && video.paused) {
                     isWaitingToSpeak = false;
                     video.play();
                     console.log('语音播放出错，视频继续播放');
