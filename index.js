@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube同声传译：字幕文本转语音TTS（适用于沉浸式翻译）
 // @namespace    http://tampermonkey.net/
-// @version      1.12
+// @version      1.12.1
 // @description  将YouTube上的沉浸式翻译双语字幕转换为语音播放，支持更改音色和调整语音速度，支持多语言
 // @author       Sean2333
 // @match        https://www.youtube.com/*
@@ -79,6 +79,10 @@
     }
 
     function createVoiceSelectUI() {
+        function updateDropdownState(isOpen) {
+            select.style.display = isOpen ? 'block' : 'none';
+            dropdownArrow.textContent = isOpen ? '▲' : '▼';
+        }
         const container = document.createElement('div');
         container.className = 'voice-select-container';
         Object.assign(container.style, {
@@ -214,7 +218,6 @@
         autoVideoPauseLabel.textContent = '自动暂停视频，以完整播放语音（推荐开启）';
         autoVideoPauseLabel.htmlFor = 'autoVideoPauseCheckbox';
         Object.assign(autoVideoPauseLabel.style, {
-            marginLeft: '5px',
             flex: '1'
         });
 
@@ -338,8 +341,15 @@
             top: '50%',
             transform: 'translateY(-50%)',
             color: '#666',
-            pointerEvents: 'none',
-            fontSize: '12px'
+            fontSize: '12px',
+            cursor: 'pointer',
+            padding: '5px'
+        });
+        
+        dropdownArrow.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const isOpen = select.style.display === 'none';
+            updateDropdownState(isOpen);
         });
 
         const select = document.createElement('ul');
@@ -361,24 +371,37 @@
 
         searchInput.addEventListener('click', (e) => {
             e.stopPropagation();
-            select.style.display = 'block';
+            updateDropdownState(true);
         });
 
         document.addEventListener('click', () => {
-            select.style.display = 'none';
+            updateDropdownState(false);
         });
 
         select.addEventListener('click', (e) => {
             e.stopPropagation();
+            const clickedOption = e.target;
+            if (clickedOption.tagName === 'LI') {
+                const voiceIndex = parseInt(clickedOption.dataset.value);
+                if (!isNaN(voiceIndex)) {
+                    // 获取当前可用的语音列表
+                    const voices = window.speechSynthesis.getVoices();
+                    selectedVoice = voices[voiceIndex];
+                    selectedVoiceName = selectedVoice.name;
+                    searchInput.value = clickedOption.textContent;
+                    GM_setValue('selectedVoiceName', selectedVoiceName);
+                    updateDropdownState(false);
+                }
+            }
         });
 
-        searchInput.oninput = function () {
+        searchInput.oninput = function() {
             const searchTerm = this.value.toLowerCase();
             Array.from(select.children).forEach(item => {
                 const text = item.textContent.toLowerCase();
                 item.style.display = text.includes(searchTerm) ? 'block' : 'none';
             });
-            select.style.display = 'block';
+            updateDropdownState(true);
         };
 
         // 测试音色按钮
