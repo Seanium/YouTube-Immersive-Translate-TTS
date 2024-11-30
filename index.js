@@ -71,7 +71,7 @@
             position: 'fixed',
             top: windowPosY || '10px',
             right: windowPosX || '10px',
-            background: 'rgba(255, 255, 255, 0.9)',
+            background: 'rgba(255, 255, 255, 0.75)',
             padding: '10px',
             border: '1px solid rgba(221, 221, 221, 0.8)',
             borderRadius: '5px',
@@ -87,7 +87,7 @@
         });
 
         container.addEventListener('mouseleave', () => {
-            container.style.background = 'rgba(255, 255, 255, 0.9)';
+            container.style.background = 'rgba(255, 255, 255, 0.75)';
             container.style.boxShadow = '0 2px 5px rgba(0, 0, 0, 0.15)';
         });
 
@@ -104,7 +104,7 @@
         });
 
         const title = document.createElement('span');
-        title.textContent = '语音设置';
+        title.textContent = '字幕语音设置';
 
         const toggleButton = document.createElement('button');
         toggleButton.textContent = isCollapsed ? '+' : '−';
