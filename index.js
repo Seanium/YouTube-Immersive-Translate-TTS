@@ -16,7 +16,7 @@
     let lastCaptionText = '';
     const synth = window.speechSynthesis;
     let selectedVoice = null;
-    let pendingText = null;
+    let pendingUtterance = null;
     let isWaitingToSpeak = false;
     let voiceSelectUI = null;
     let isDragging = false;
@@ -37,6 +37,7 @@
     let originalPushState = null;
     let originalReplaceState = null;
     let timeoutIds = [];
+    let currentUtterance = null;
 
     function setupShortcuts() {
         document.addEventListener('keydown', (e) => {
@@ -183,7 +184,7 @@
                     }
                     isWaitingToSpeak = false;
                 }
-                pendingText = null;
+                pendingUtterance = null;
 
                 disconnectObservers();
             } else {
@@ -345,7 +346,7 @@
             cursor: 'pointer',
             padding: '5px'
         });
-        
+
         dropdownArrow.addEventListener('click', (e) => {
             e.stopPropagation();
             if (!isSpeechEnabled) {
@@ -398,7 +399,7 @@
             }
         });
 
-        searchInput.oninput = function() {
+        searchInput.oninput = function () {
             const searchTerm = this.value.toLowerCase();
             Array.from(select.children).forEach(item => {
                 const text = item.textContent.toLowerCase();
@@ -747,83 +748,94 @@
     }
 
     function speakText(text, isNewCaption = false) {
-        if (!isSpeechEnabled) {
+        if (!isSpeechEnabled || !text) {
             return;
         }
 
         const video = document.querySelector('video');
 
-        if (isNewCaption && synth.speaking) {
-            console.log('新字幕出现，但当前语音未完成');
-            if (autoVideoPause) {
-                pendingText = text;
+        // 准备新的语音合成实例
+        const utterance = new SpeechSynthesisUtterance(text);
+        if (selectedVoice) {
+            utterance.voice = selectedVoice;
+            utterance.lang = selectedVoice.lang;
+        }
+        utterance.volume = speechVolume;
+        if (followVideoSpeed && video) {
+            utterance.rate = video.playbackRate;
+        } else {
+            utterance.rate = customSpeed;
+        }
+
+        // 设置语音事件处理
+        utterance.onstart = () => {
+            currentUtterance = utterance;
+            console.log('开始播放语音:', text);
+        };
+
+        utterance.onend = () => {
+            console.log('语音播放完成');
+
+            // 只有当前播放的语音完成时才清除currentUtterance
+            if (currentUtterance === utterance) {
+                currentUtterance = null;
+            }
+
+            if (pendingUtterance) {
+                console.log('播放准备好的语音');
+                const nextUtterance = pendingUtterance;
+                pendingUtterance = null;
+                // 确保下一句话开始播放
+                synth.speak(nextUtterance);
+            } else if (autoVideoPause && isWaitingToSpeak && video && video.paused) {
+                isWaitingToSpeak = false;
+                video.play();
+                console.log('所有语音播放完成，视频继续播放');
+            }
+        };
+
+        utterance.onerror = (event) => {
+            console.error('语音播放出错:', event);
+            // 只有当前播放的语音出错时才清除currentUtterance
+            if (currentUtterance === utterance) {
+                currentUtterance = null;
+            }
+            if (autoVideoPause && isWaitingToSpeak && video && video.paused) {
+                isWaitingToSpeak = false;
+                video.play();
+            }
+            // 如果出错的是待播放的语音，也需要清除
+            if (pendingUtterance === utterance) {
+                pendingUtterance = null;
+            }
+        };
+
+        if (synth.speaking) {
+            // 当前有语音在播放，将新语音存为待播放
+            console.log('当前正在播放语音，新语音准备完成:', text);
+
+            // 如果已经有待播放的语音，先取消它
+            if (pendingUtterance) {
+                console.log('更新待播放语音');
+                // 可以选择是否保留之前的待播放语音
+                // synth.cancel(); // 取消之前的待播放语音
+            }
+
+            if (autoVideoPause && !isWaitingToSpeak) {
+                // 只在这时暂停视频
                 if (video && !video.paused) {
                     video.pause();
                     isWaitingToSpeak = true;
-                    console.log('视频已暂停，等待当前语音完成');
+                    console.log('新语音准备完成，视频暂停等待当前语音完成');
                 }
-            } else {
-                // 不自动暂停时，直接取消当前语音播放新的
-                synth.cancel();
-                pendingText = null;
-                isWaitingToSpeak = false;
-            }
-            return;
-        }
-
-        if (synth.speaking) {
-            console.log('正在停止当前语音播放');
-            synth.cancel();
-        }
-
-        if (text) {
-            const utterance = new SpeechSynthesisUtterance(text);
-
-            if (selectedVoice) {
-                utterance.voice = selectedVoice;
-                utterance.lang = selectedVoice.lang;
             }
 
-            utterance.volume = speechVolume;
-
-            if (followVideoSpeed && video) {
-                utterance.rate = video.playbackRate;
-                console.log('使用视频倍速：', utterance.rate);
-            } else {
-                utterance.rate = customSpeed;
-                console.log('使用自定义倍速：', utterance.rate);
-            }
-
-            utterance.onend = () => {
-                console.log('当前语音播放完成');
-
-                if (pendingText) {
-                    console.log('播放等待的文本');
-                    const nextText = pendingText;
-                    pendingText = null;
-                    speakText(nextText);
-                }
-                else if (autoVideoPause && isWaitingToSpeak && video && video.paused) {
-                    isWaitingToSpeak = false;
-                    video.play();
-                    console.log('所有语音播放完成，视频继续播放');
-                }
-            };
-
-            utterance.onerror = () => {
-                console.error('语音播放出错');
-                if (autoVideoPause && isWaitingToSpeak && video && video.paused) {
-                    isWaitingToSpeak = false;
-                    video.play();
-                    console.log('语音播放出错，视频继续播放');
-                }
-                pendingText = null;
-            };
-
-            synth.speak(utterance);
-            console.log('开始朗读');
+            // 更新待播放的语音
+            pendingUtterance = utterance;
         } else {
-            console.log('文本为空，跳过朗读');
+            // 没有语音在播放，直接开始播放
+            console.log('直接播放语音');
+            synth.speak(utterance);
         }
     }
 
@@ -866,7 +878,7 @@
                     }
 
                     lastCaptionText = '';
-                    pendingText = null;
+                    pendingUtterance = null;
                     if (synth.speaking) {
                         synth.cancel();
                         console.log('取消当前正在播放的语音');
