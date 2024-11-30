@@ -89,6 +89,7 @@
             position: 'fixed',
             top: windowPosY || '10px',
             right: windowPosX || '10px',
+            width: '260px',
             background: 'rgba(255, 255, 255, 0.75)',
             padding: '10px',
             border: '1px solid rgba(221, 221, 221, 0.8)',
@@ -199,7 +200,10 @@
         Object.assign(autoVideoPauseDiv.style, {
             marginBottom: '10px',
             borderBottom: '1px solid #eee',
-            paddingBottom: '10px'
+            paddingBottom: '10px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '5px'
         });
 
         const autoVideoPauseCheckbox = document.createElement('input');
@@ -211,8 +215,75 @@
         autoVideoPauseLabel.textContent = '自动暂停视频，以完整播放语音（推荐开启）';
         autoVideoPauseLabel.htmlFor = 'autoVideoPauseCheckbox';
         Object.assign(autoVideoPauseLabel.style, {
-            marginLeft: '5px'
+            marginLeft: '5px',
+            flex: '1'
         });
+
+        const helpIcon = document.createElement('span');
+        helpIcon.textContent = '?';
+        Object.assign(helpIcon.style, {
+            display: 'inline-flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            width: '14px',
+            height: '14px',
+            borderRadius: '50%',
+            backgroundColor: '#e0e0e0',
+            color: '#666',
+            fontSize: '10px',
+            cursor: 'help',
+            marginLeft: '2px'
+        });
+
+        const tooltip = document.createElement('div');
+        tooltip.textContent = '开启后，当新字幕出现时，如果上一条语音还未播放完，会自动暂停视频等待语音播放完成。这样可以确保每条字幕都被完整朗读。由于文字转语音存在一定延迟，建议开启此选项以获得最佳体验。';
+        Object.assign(tooltip.style, {
+            position: 'fixed',
+            display: 'none',
+            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+            color: 'white',
+            padding: '8px 12px',
+            borderRadius: '4px',
+            fontSize: '12px',
+            width: '220px',
+            zIndex: '10000',
+            pointerEvents: 'none',
+            lineHeight: '1.5', 
+            boxShadow: '0 2px 8px rgba(0, 0, 0, 0.15)'
+        });
+        helpIcon.appendChild(tooltip);
+
+        helpIcon.addEventListener('mousemove', (e) => {
+            tooltip.style.display = 'block';
+            const gap = 10;
+            let left = e.clientX + gap;
+            let top = e.clientY + gap;
+            
+            if (left + tooltip.offsetWidth > window.innerWidth) {
+                left = e.clientX - tooltip.offsetWidth - gap;
+            }
+            
+            if (top + tooltip.offsetHeight > window.innerHeight) {
+                top = e.clientY - tooltip.offsetHeight - gap;
+            }
+            
+            tooltip.style.left = left + 'px';
+            tooltip.style.top = top + 'px';
+        });
+        
+        helpIcon.addEventListener('mouseleave', () => {
+            tooltip.style.display = 'none';
+        });
+
+        const labelWrapper = document.createElement('div');
+        Object.assign(labelWrapper.style, {
+            display: 'flex',
+            alignItems: 'center',
+            flex: '1'
+        });
+
+        labelWrapper.appendChild(autoVideoPauseLabel);
+        labelWrapper.appendChild(helpIcon);
 
         autoVideoPauseCheckbox.onchange = function() {
             autoVideoPause = this.checked;
@@ -221,7 +292,7 @@
         };
 
         autoVideoPauseDiv.appendChild(autoVideoPauseCheckbox);
-        autoVideoPauseDiv.appendChild(autoVideoPauseLabel);
+        autoVideoPauseDiv.appendChild(labelWrapper);
         content.insertBefore(autoVideoPauseDiv, content.firstChild.nextSibling);
 
         const voiceDiv = document.createElement('div');
