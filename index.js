@@ -38,6 +38,24 @@
     let originalReplaceState = null;
     let timeoutIds = [];
 
+    let shortcuts = {
+        toggleSpeech: 'Alt+T',  // 开关TTS功能
+    };
+
+    function setupShortcuts() {
+        document.addEventListener('keydown', (e) => {
+            if (e.altKey && e.key.toLowerCase() === 't') {  // 添加 toLowerCase() 以兼容大小写
+                const speechToggleCheckbox = document.querySelector('#speechToggleCheckbox');
+                if (speechToggleCheckbox) {
+                    speechToggleCheckbox.click();
+                    console.log('触发TTS开关快捷键');
+                } else {
+                    console.log('未找到TTS开关元素');
+                }
+            }
+        });
+    }
+
     function loadVoices() {
         return new Promise(function(resolve) {
             let voices = synth.getVoices();
@@ -134,7 +152,7 @@
         speechToggleCheckbox.id = 'speechToggleCheckbox';
 
         const speechToggleLabel = document.createElement('label');
-        speechToggleLabel.textContent = '启用语音播放';
+        speechToggleLabel.textContent = '启用语音播放（Alt+T）';
         speechToggleLabel.htmlFor = 'speechToggleCheckbox';
         Object.assign(speechToggleLabel.style, {
             marginLeft: '5px'
@@ -190,7 +208,7 @@
         autoVideoPauseCheckbox.id = 'autoVideoPauseCheckbox';
 
         const autoVideoPauseLabel = document.createElement('label');
-        autoVideoPauseLabel.textContent = '自动暂停视频，以完整播放语音（建议开启）';
+        autoVideoPauseLabel.textContent = '自动暂停视频，以完整播放语音（推荐开启）';
         autoVideoPauseLabel.htmlFor = 'autoVideoPauseCheckbox';
         Object.assign(autoVideoPauseLabel.style, {
             marginLeft: '5px'
@@ -863,6 +881,7 @@
         console.log('页面加载完成，开始初始化脚本');
         setTimeout(() => {
             selectVoice();
+            setupShortcuts();
 
             if (isSpeechEnabled) {
                 setupCaptionObserver();
