@@ -1,14 +1,13 @@
 // ==UserScript==
 // @name         YouTube字幕文本转语音TTS（适用于沉浸式翻译）
 // @namespace    http://tampermonkey.net/
-// @version      1.9
+// @version      1.10
 // @description  将YouTube上的沉浸式翻译中文字幕转换为语音播放，支持更改音色和调整语音速度
 // @author       Sean2333
 // @match        https://www.youtube.com/*
-// @grant        none
-// @license MIT
-// @downloadURL https://update.greasyfork.org/scripts/519266/YouTube%E5%AD%97%E5%B9%95%E6%96%87%E6%9C%AC%E8%BD%AC%E8%AF%AD%E9%9F%B3TTS%EF%BC%88%E9%80%82%E7%94%A8%E4%BA%8E%E6%B2%89%E6%B5%B8%E5%BC%8F%E7%BF%BB%E8%AF%91%EF%BC%89.user.js
-// @updateURL https://update.greasyfork.org/scripts/519266/YouTube%E5%AD%97%E5%B9%95%E6%96%87%E6%9C%AC%E8%BD%AC%E8%AF%AD%E9%9F%B3TTS%EF%BC%88%E9%80%82%E7%94%A8%E4%BA%8E%E6%B2%89%E6%B5%B8%E5%BC%8F%E7%BF%BB%E8%AF%91%EF%BC%89.meta.js
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @license      MIT
 // ==/UserScript==
 
 (function() {
@@ -17,15 +16,26 @@
     let lastCaptionText = '';
     const synth = window.speechSynthesis;
     let selectedVoice = null;
-    let pendingText = null; // 存储等待朗读的文本
-    let isWaitingToSpeak = false; // 是否正在等待朗读
+    let pendingText = null;
+    let isWaitingToSpeak = false;
     let voiceSelectUI = null;
     let isDragging = false;
     let startX;
     let startY;
-    let followVideoSpeed = true; // 是否跟随视频倍速
-    let customSpeed = 1.0; // 自定义倍速值
-    let isSpeechEnabled = true; // 控制语音播放的开关状态
+    let followVideoSpeed = GM_getValue('followVideoSpeed', true);
+    let customSpeed = GM_getValue('customSpeed', 1.0);
+    let isSpeechEnabled = GM_getValue('isSpeechEnabled', true);
+    let speechVolume = GM_getValue('speechVolume', 1.0);
+    let isCollapsed = GM_getValue('isCollapsed', false);
+    let selectedVoiceName = GM_getValue('selectedVoiceName', null);
+    let windowPosX = GM_getValue('windowPosX', null);
+    let windowPosY = GM_getValue('windowPosY', null);
+    let currentObserver = null;
+    let currentVideoId = null;
+    let videoObserver = null;
+    let originalPushState = null;
+    let originalReplaceState = null;
+    let timeoutIds = [];
 
     function loadVoices() {
         return new Promise(function(resolve) {
@@ -41,16 +51,14 @@
                     resolve(voices);
                 };
 
-                // 添加超时重试机制
-                setTimeout(() => {
-                    if (voices.length === 0) {
-                        voices = synth.getVoices();
-                        if (voices.length > 0) {
-                            console.log('通过重试加载到语音列表，共', voices.length, '个语音');
-                            resolve(voices);
-                        }
+                const timeoutId = setTimeout(() => {
+                    voices = synth.getVoices();
+                    if (voices.length > 0) {
+                        console.log('通过重试加载到语音列表，共', voices.length, '个语音');
+                        resolve(voices);
                     }
                 }, 1000);
+                timeoutIds.push(timeoutId);
             }
         });
     }
@@ -60,8 +68,8 @@
         container.className = 'voice-select-container';
         Object.assign(container.style, {
             position: 'fixed',
-            top: '10px',
-            right: '10px',
+            top: windowPosY || '10px',
+            right: windowPosX || '10px',
             background: 'rgba(255, 255, 255, 0.9)',
             padding: '10px',
             border: '1px solid rgba(221, 221, 221, 0.8)',
@@ -72,7 +80,6 @@
             transition: 'all 0.2s'
         });
 
-        // 添加鼠标悬停效果
         container.addEventListener('mouseenter', () => {
             container.style.background = 'rgba(255, 255, 255, 0.95)';
             container.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.2)';
@@ -83,7 +90,6 @@
             container.style.boxShadow = '0 2px 5px rgba(0, 0, 0, 0.15)';
         });
 
-        // 标题栏
         const titleBar = document.createElement('div');
         titleBar.className = 'title-bar';
         Object.assign(titleBar.style, {
@@ -100,7 +106,7 @@
         title.textContent = '语音设置';
 
         const toggleButton = document.createElement('button');
-        toggleButton.textContent = '−';
+        toggleButton.textContent = isCollapsed ? '+' : '−';
         Object.assign(toggleButton.style, {
             border: 'none',
             background: 'none',
@@ -109,10 +115,11 @@
             padding: '0 5px'
         });
 
-        // 内容区域
         const content = document.createElement('div');
+        if (isCollapsed) {
+            content.style.display = 'none';
+        }
 
-        // 创建语音开关控制区域
         const speechToggleDiv = document.createElement('div');
         Object.assign(speechToggleDiv.style, {
             marginBottom: '10px',
@@ -132,17 +139,17 @@
             marginLeft: '5px'
         });
 
-        // 语音开关事件处理
         speechToggleCheckbox.onchange = function() {
             isSpeechEnabled = this.checked;
-            // 更新其他控件的状态
             select.disabled = !isSpeechEnabled;
             testButton.disabled = !isSpeechEnabled;
             followSpeedCheckbox.disabled = !isSpeechEnabled;
             customSpeedSelect.disabled = !isSpeechEnabled || followVideoSpeed;
+            volumeSlider.disabled = !isSpeechEnabled;
+
+            GM_setValue('isSpeechEnabled', isSpeechEnabled);
 
             if (!isSpeechEnabled) {
-                // 如果关闭语音，取消当前播放并恢复视频播放
                 if (synth.speaking) {
                     synth.cancel();
                 }
@@ -154,19 +161,20 @@
                     isWaitingToSpeak = false;
                 }
                 pendingText = null;
+
+                disconnectObservers();
+            } else {
+                setupCaptionObserver();
+                setupNavigationListeners();
             }
 
             console.log('语音播放已' + (isSpeechEnabled ? '启用' : '禁用'));
         };
 
-        // 组装语音开关UI
         speechToggleDiv.appendChild(speechToggleCheckbox);
         speechToggleDiv.appendChild(speechToggleLabel);
-
-        // 将语音开关添加到内容区域最上方
         content.insertBefore(speechToggleDiv, content.firstChild);
 
-        // 音色选择区域
         const voiceDiv = document.createElement('div');
         Object.assign(voiceDiv.style, {
             marginBottom: '10px'
@@ -195,7 +203,53 @@
             width: '100%'
         });
 
-        // 倍速控制区域
+        const volumeControl = document.createElement('div');
+        Object.assign(volumeControl.style, {
+            marginTop: '10px',
+            borderTop: '1px solid #eee',
+            paddingTop: '10px'
+        });
+
+        const volumeLabel = document.createElement('div');
+        volumeLabel.textContent = '音量控制：';
+        Object.assign(volumeLabel.style, {
+            marginBottom: '5px'
+        });
+
+        const volumeSlider = document.createElement('input');
+        volumeSlider.type = 'range';
+        volumeSlider.min = '0';
+        volumeSlider.max = '1';
+        volumeSlider.step = '0.1';
+        volumeSlider.value = speechVolume;
+        Object.assign(volumeSlider.style, {
+            width: '100%',
+            margin: '5px 0',
+        });
+
+        const volumeValue = document.createElement('span');
+        volumeValue.textContent = `${Math.round(speechVolume * 100)}%`;
+        Object.assign(volumeValue.style, {
+            fontSize: '12px',
+            color: '#666',
+            marginLeft: '5px'
+        });
+
+        volumeSlider.onchange = function() {
+            speechVolume = parseFloat(this.value);
+            volumeValue.textContent = `${Math.round(speechVolume * 100)}%`;
+            GM_setValue('speechVolume', speechVolume);
+            console.log('音量已设置为：', speechVolume);
+        };
+
+        volumeSlider.oninput = function() {
+            volumeValue.textContent = `${Math.round(this.value * 100)}%`;
+        };
+
+        volumeControl.appendChild(volumeLabel);
+        volumeControl.appendChild(volumeSlider);
+        volumeControl.appendChild(volumeValue);
+
         const speedControl = document.createElement('div');
         Object.assign(speedControl.style, {
             marginTop: '10px',
@@ -203,7 +257,6 @@
             paddingTop: '10px'
         });
 
-        // 跟随视频倍速选项
         const followSpeedDiv = document.createElement('div');
         Object.assign(followSpeedDiv.style, {
             marginBottom: '8px'
@@ -221,7 +274,6 @@
             marginLeft: '5px'
         });
 
-        // 自定义倍速选项
         const customSpeedDiv = document.createElement('div');
 
         const customSpeedLabel = document.createElement('div');
@@ -246,15 +298,16 @@
             borderRadius: '3px'
         });
 
-        // 事件处理
         followSpeedCheckbox.onchange = function() {
             followVideoSpeed = this.checked;
             customSpeedSelect.disabled = this.checked;
+            GM_setValue('followVideoSpeed', followVideoSpeed);
             console.log('语音速度模式：', followVideoSpeed ? '跟随视频' : '自定义');
         };
 
         customSpeedSelect.onchange = function() {
             customSpeed = parseFloat(this.value);
+            GM_setValue('customSpeed', customSpeed);
             console.log('自定义语音速度设置为：', customSpeed);
         };
 
@@ -265,10 +318,8 @@
             }
         };
 
-        // 初始化状态
         customSpeedSelect.disabled = followVideoSpeed;
 
-        // 组装UI
         titleBar.appendChild(title);
         titleBar.appendChild(toggleButton);
 
@@ -286,41 +337,41 @@
         speedControl.appendChild(customSpeedDiv);
 
         content.appendChild(voiceDiv);
+        content.appendChild(volumeControl);
         content.appendChild(speedControl);
 
         container.appendChild(titleBar);
         container.appendChild(content);
 
+        if (isCollapsed) {
+            container.style.width = 'auto';
+            container.style.minWidth = '100px';
+        }
+
         document.body.appendChild(container);
 
-        // 折叠/展开功能
-        let isCollapsed = false;
         toggleButton.onclick = (e) => {
             e.stopPropagation();
             isCollapsed = !isCollapsed;
 
-            // 保存当前位置的 right 值
             const currentRight = container.style.right;
 
             if (isCollapsed) {
-                // 保存内容区域的宽度，用于展开时恢复
                 container.dataset.expandedWidth = container.offsetWidth + 'px';
                 content.style.display = 'none';
-                // 调整容器宽度为标题栏所需的最小宽度
                 container.style.width = 'auto';
                 container.style.minWidth = '100px';
             } else {
                 content.style.display = 'block';
-                // 恢复原来的宽度
                 container.style.width = container.dataset.expandedWidth;
             }
 
-            // 保持 right 值不变
             container.style.right = currentRight;
             toggleButton.textContent = isCollapsed ? '+' : '−';
+
+            GM_setValue('isCollapsed', isCollapsed);
         };
 
-        // 添加拖动事件监听
         document.addEventListener('mousedown', dragStart);
         document.addEventListener('mousemove', drag);
         document.addEventListener('mouseup', dragEnd);
@@ -343,10 +394,19 @@
     }
 
     function dragEnd(e) {
-        isDragging = false;
-        const container = document.querySelector('.voice-select-container');
-        if (container) {
-            container.style.transition = 'all 0.2s';
+        if (isDragging) {
+            isDragging = false;
+            const container = document.querySelector('.voice-select-container');
+            if (container) {
+                container.style.transition = 'all 0.2s';
+
+                const rect = container.getBoundingClientRect();
+                windowPosX = `${window.innerWidth - rect.right}px`;
+                windowPosY = `${rect.top}px`;
+                GM_setValue('windowPosX', windowPosX);
+                GM_setValue('windowPosY', windowPosY);
+                console.log('保存浮窗位置：', windowPosX, windowPosY);
+            }
         }
     }
 
@@ -364,10 +424,8 @@
                 newX = Math.min(Math.max(0, newX), maxX);
                 newY = Math.min(Math.max(0, newY), maxY);
 
-                // 转换为 right 值
                 container.style.right = `${window.innerWidth - newX - container.offsetWidth}px`;
                 container.style.top = `${newY}px`;
-                // 清除 left 属性
                 container.style.left = '';
             }
         }
@@ -385,8 +443,8 @@
             }
 
             const chineseVoices = voices.filter(voice =>
-                voice.lang.includes('zh') || voice.name.toLowerCase().includes('chinese')
-            );
+                                                voice.lang.includes('zh') || voice.name.toLowerCase().includes('chinese')
+                                               );
 
             chineseVoices.forEach((voice, index) => {
                 const option = document.createElement('option');
@@ -395,9 +453,15 @@
                 select.appendChild(option);
             });
 
-            selectedVoice = chineseVoices.find(voice =>
-                voice.name === 'Microsoft Xiaoxiao Online (Natural) - Chinese (Mainland)'
-            ) || chineseVoices[0];
+            if (selectedVoiceName) {
+                selectedVoice = chineseVoices.find(voice => voice.name === selectedVoiceName);
+            }
+
+            if (!selectedVoice) {
+                selectedVoice = chineseVoices.find(voice =>
+                                                   voice.name === 'Microsoft Xiaoxiao Online (Natural) - Chinese (Mainland)'
+                                                  ) || chineseVoices[0];
+            }
 
             const selectedIndex = chineseVoices.indexOf(selectedVoice);
             if (selectedIndex >= 0) {
@@ -406,6 +470,8 @@
 
             select.onchange = function() {
                 selectedVoice = chineseVoices[this.value];
+                selectedVoiceName = selectedVoice.name;
+                GM_setValue('selectedVoiceName', selectedVoiceName);
                 console.log('已切换语音到：', selectedVoice.name);
             };
 
@@ -417,7 +483,6 @@
     }
 
     function speakText(text, isNewCaption = false) {
-        // 如果语音播放被禁用，直接返回
         if (!isSpeechEnabled) {
             return;
         }
@@ -435,7 +500,6 @@
             return;
         }
 
-        // console.log('准备朗读文本：', text);
         if (synth.speaking) {
             console.log('正在停止当前语音播放');
             synth.cancel();
@@ -449,7 +513,8 @@
                 utterance.voice = selectedVoice;
             }
 
-            // 设置语速
+            utterance.volume = speechVolume;
+
             if (followVideoSpeed && video) {
                 utterance.rate = video.playbackRate;
                 console.log('使用视频倍速：', utterance.rate);
@@ -494,7 +559,6 @@
     function getCaptionText() {
         const immersiveCaptionWindow = document.querySelector('#immersive-translate-caption-window');
         if (immersiveCaptionWindow && immersiveCaptionWindow.shadowRoot) {
-            // 直接查找所有 target-cue 类的元素
             const targetCaptions = immersiveCaptionWindow.shadowRoot.querySelectorAll('.target-cue');
             let captionText = '';
             targetCaptions.forEach(span => {
@@ -507,16 +571,38 @@
     }
 
     function setupCaptionObserver() {
+        if (!isSpeechEnabled) {
+            return;
+        }
+
+        let retryCount = 0;
+        const maxRetries = 10;
+
         function waitForCaptionContainer() {
+            if (!isSpeechEnabled) {
+                return;
+            }
+
             const immersiveCaptionWindow = document.querySelector('#immersive-translate-caption-window');
             if (immersiveCaptionWindow && immersiveCaptionWindow.shadowRoot) {
-                // 改为监听 shadowRoot 下的第一层 div
                 const rootContainer = immersiveCaptionWindow.shadowRoot.querySelector('div');
                 if (rootContainer) {
                     console.log('找到字幕根容器，开始监听变化');
 
-                    const observer = new MutationObserver(() => {
-                        // 获取当前文本
+                    if (currentObserver) {
+                        currentObserver.disconnect();
+                        console.log('断开旧的字幕观察者连接');
+                    }
+
+                    lastCaptionText = '';
+                    pendingText = null;
+                    if (synth.speaking) {
+                        synth.cancel();
+                        console.log('取消当前正在播放的语音');
+                    }
+                    isWaitingToSpeak = false;
+
+                    currentObserver = new MutationObserver(() => {
                         const currentText = getCaptionText();
                         if (currentText && currentText !== lastCaptionText) {
                             lastCaptionText = currentText;
@@ -527,10 +613,11 @@
                     const config = {
                         childList: true,
                         subtree: true,
-                        characterData: true  // 添加对文本内容变化的监听
+                        characterData: true
                     };
 
-                    observer.observe(rootContainer, config);
+                    currentObserver.observe(rootContainer, config);
+                    console.log('新的字幕观察者设置完成');
 
                     const initialText = getCaptionText();
                     if (initialText) {
@@ -538,14 +625,168 @@
                         speakText(initialText, true);
                     }
                 } else {
-                    setTimeout(waitForCaptionContainer, 1000);
+                    if (retryCount < maxRetries) {
+                        console.log('未找到字幕容器，1秒后重试');
+                        retryCount++;
+                        const timeoutId = setTimeout(waitForCaptionContainer, 1000);
+                        timeoutIds.push(timeoutId);
+                    } else {
+                        console.log('达到最大重试次数，放弃寻找字幕容器');
+                    }
                 }
             } else {
-                setTimeout(waitForCaptionContainer, 1000);
+                if (retryCount < maxRetries) {
+                    console.log('等待字幕窗口加载，1秒后重试');
+                    retryCount++;
+                    const timeoutId = setTimeout(waitForCaptionContainer, 1000);
+                    timeoutIds.push(timeoutId);
+                } else {
+                    console.log('达到最大重试次数，放弃寻找字幕窗口');
+                }
             }
         }
 
         waitForCaptionContainer();
+    }
+
+    function checkForVideoChange() {
+        if (!isSpeechEnabled) {
+            return;
+        }
+
+        const videoId = new URLSearchParams(window.location.search).get('v');
+
+        if (videoId && videoId !== currentVideoId) {
+            console.log('检测到视频切换，从', currentVideoId, '切换到', videoId);
+            currentVideoId = videoId;
+
+            if (currentObserver) {
+                currentObserver.disconnect();
+                console.log('断开旧的字幕观察者连接');
+            }
+            if (synth.speaking) {
+                synth.cancel();
+                console.log('取消当前正在播放的语音');
+            }
+
+            let retryCount = 0;
+            const maxRetries = 10;
+
+            function trySetupObserver() {
+                if (!isSpeechEnabled) {
+                    return;
+                }
+
+                if (retryCount >= maxRetries) {
+                    console.log('达到最大重试次数，放弃设置字幕监听');
+                    return;
+                }
+
+                const immersiveCaptionWindow = document.querySelector('#immersive-translate-caption-window');
+                if (immersiveCaptionWindow && immersiveCaptionWindow.shadowRoot) {
+                    console.log('找到字幕容器，开始设置监听');
+                    setupCaptionObserver();
+                } else {
+                    console.log(`未找到字幕容器，${retryCount + 1}秒后重试`);
+                    retryCount++;
+                    const timeoutId = setTimeout(trySetupObserver, 1000);
+                    timeoutIds.push(timeoutId);
+                }
+            }
+
+            const timeoutId = setTimeout(trySetupObserver, 1500);
+            timeoutIds.push(timeoutId);
+        }
+    }
+
+    function setupNavigationListeners() {
+        if (!isSpeechEnabled) {
+            return;
+        }
+
+        videoObserver = new MutationObserver((mutations) => {
+            for (const mutation of mutations) {
+                if (mutation.type === 'childList') {
+                    checkForVideoChange();
+                }
+            }
+        });
+
+        function observeVideoPlayer() {
+            const playerContainer = document.querySelector('#player-container');
+            if (playerContainer) {
+                videoObserver.observe(playerContainer, {
+                    childList: true,
+                    subtree: true
+                });
+            }
+        }
+
+        observeVideoPlayer();
+
+        originalPushState = history.pushState;
+        history.pushState = function() {
+            originalPushState.apply(history, arguments);
+            checkForVideoChange();
+        };
+
+        originalReplaceState = history.replaceState;
+        history.replaceState = function() {
+            originalReplaceState.apply(history, arguments);
+            checkForVideoChange();
+        };
+
+        window.addEventListener('hashchange', checkForVideoChange);
+        window.addEventListener('popstate', checkForVideoChange);
+
+        window.addEventListener('yt-navigate-start', onNavigateStart);
+        window.addEventListener('yt-navigate-finish', onNavigateFinish);
+    }
+
+    function onNavigateStart() {
+        if (isSpeechEnabled) {
+            console.log('YouTube导航开始');
+            checkForVideoChange();
+        }
+    }
+
+    function onNavigateFinish() {
+        if (isSpeechEnabled) {
+            console.log('YouTube导航完成');
+            checkForVideoChange();
+        }
+    }
+
+    function disconnectObservers() {
+        if (currentObserver) {
+            currentObserver.disconnect();
+            currentObserver = null;
+            console.log('已断开字幕观察者');
+        }
+
+        if (videoObserver) {
+            videoObserver.disconnect();
+            videoObserver = null;
+            console.log('已断开视频观察者');
+        }
+
+        window.removeEventListener('hashchange', checkForVideoChange);
+        window.removeEventListener('popstate', checkForVideoChange);
+        window.removeEventListener('yt-navigate-start', onNavigateStart);
+        window.removeEventListener('yt-navigate-finish', onNavigateFinish);
+
+        if (originalPushState) {
+            history.pushState = originalPushState;
+            originalPushState = null;
+        }
+
+        if (originalReplaceState) {
+            history.replaceState = originalReplaceState;
+            originalReplaceState = null;
+        }
+
+        timeoutIds.forEach(id => clearTimeout(id));
+        timeoutIds = [];
     }
 
     function cleanup() {
@@ -553,29 +794,44 @@
         document.removeEventListener('mousemove', drag);
         document.removeEventListener('mouseup', dragEnd);
         document.removeEventListener('mouseleave', dragEnd);
+
+        window.removeEventListener('resize', onWindowResize);
+
+        disconnectObservers();
+
+        if (synth.speaking) {
+            synth.cancel();
+        }
+    }
+
+    function onWindowResize() {
+        const container = document.querySelector('.voice-select-container');
+        if (container) {
+            const rect = container.getBoundingClientRect();
+            const maxY = window.innerHeight - container.offsetHeight;
+
+            let newY = Math.min(Math.max(0, rect.top), maxY);
+            container.style.top = `${newY}px`;
+        }
     }
 
     window.addEventListener('load', function() {
         console.log('页面加载完成，开始初始化脚本');
         setTimeout(() => {
             selectVoice();
-            setupCaptionObserver();
+
+            if (isSpeechEnabled) {
+                setupCaptionObserver();
+                setupNavigationListeners();
+
+                currentVideoId = new URLSearchParams(window.location.search).get('v');
+                console.log('初始视频ID:', currentVideoId);
+            }
         }, 1000);
     });
 
     window.addEventListener('unload', cleanup);
 
-    // 修改窗口大小变化处理
-    window.addEventListener('resize', function() {
-        const container = document.querySelector('.voice-select-container');
-        if (container) {
-            const rect = container.getBoundingClientRect();
-            const maxY = window.innerHeight - container.offsetHeight;
-
-            // 保持右侧距离不变，只调整 top 值
-            let newY = Math.min(Math.max(0, rect.top), maxY);
-            container.style.top = `${newY}px`;
-        }
-    });
+    window.addEventListener('resize', onWindowResize);
 
 })();
